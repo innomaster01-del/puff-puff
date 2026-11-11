@@ -115,7 +115,7 @@ private fun PuffAr(session: Session, onThreeD: () -> Unit) {
             ambientOcclusionOptions = ambientOcclusionOptions.apply { enabled = true }
         }
     }
-    val machine = remember { Machine(modelLoader, session.game) }
+    val machine = remember { Machine(engine, modelLoader, session) }
     val cabinet = rememberModelInstance(modelLoader, "models/pp_cabinet.glb")
     val reticleModel = rememberModelInstance(modelLoader, "models/reticle.glb")
     var anchor by remember { mutableStateOf<Anchor?>(null) }
@@ -157,6 +157,7 @@ private fun PuffAr(session: Session, onThreeD: () -> Unit) {
                         placedRoot.v?.let { r -> r.worldPosition = Position(p.tx(), p.ty(), p.tz()); r.worldQuaternion = dev.romainguy.kotlin.math.Quaternion(p.qx(), p.qy(), p.qz(), p.qw()) }
                     }
                     frameRef.v?.let { machine.attach(it) }
+                    cabinet?.let { machine.bindDisplay(it) }
                     session.tick(); machine.update()
                 }
             },
@@ -196,7 +197,7 @@ private fun Puff3D(session: Session, onAr: () -> Unit) {
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
     val view = rememberView(engine)
-    val machine = remember { Machine(modelLoader, session.game) }
+    val machine = remember { Machine(engine, modelLoader, session) }
     val cabinet = rememberModelInstance(modelLoader, "models/pp_cabinet.glb")
     val frameRef = remember { Ref<io.github.sceneview.node.Node?>(null) }
     // three places to stand, then drag and pinch from there
@@ -214,6 +215,7 @@ private fun Puff3D(session: Session, onAr: () -> Unit) {
             cameraManipulator = rememberCameraManipulator(orbitHomePosition = views[0].second, targetPosition = views[0].third),
             onFrame = { _ ->
                 frameRef.v?.let { machine.attach(it) }
+                cabinet?.let { machine.bindDisplay(it) }
                 session.tick(); machine.update()
             },
         ) {
@@ -233,6 +235,9 @@ private fun Puff3D(session: Session, onAr: () -> Unit) {
 private fun Hud(session: Session, extras: @Composable () -> Unit) {
     var now by remember { mutableLongStateOf(SystemClock.uptimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(120); now = SystemClock.uptimeMillis() } }
+    // a bumper, a slingshot or the kickback is felt in the hand
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    DisposableEffect(session) { session.onBump = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress) }; onDispose { session.onBump = null } }
     Box(Modifier.fillMaxSize()) {
         // the display
         Column(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {

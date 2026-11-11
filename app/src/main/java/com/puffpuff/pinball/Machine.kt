@@ -27,7 +27,7 @@ class Sounds(context: Context) : AutoCloseable {
     private val ids = HashMap<String, Int>()
     var muted = false
     init {
-        for (n in listOf("flipper", "bumper", "sling", "target", "lane", "launch", "drain", "saved", "saucer", "kick", "bonus", "multiball", "extra", "tilt", "nudge", "gameover", "start"))
+        for (n in listOf("flipper", "bumper", "sling", "target", "lane", "launch", "drain", "saved", "saucer", "kick", "bonus", "multiball", "extra", "tilt", "nudge", "gameover", "start", "spin"))
             runCatching { context.assets.openFd("sounds/$n.wav").use { ids[n] = pool.load(it, 1) } }
     }
     fun play(name: String, volume: Float = 1f, rate: Float = 1f) { if (!muted) ids[name]?.let { pool.play(it, volume, volume, 1, 0, rate) } }
@@ -58,6 +58,8 @@ class Session(context: Context) {
     var message by mutableStateOf("PRESS START"); private set
     var messageAt by mutableLongStateOf(0L); private set
     private var last = 0L
+    /** A knock you can feel (the screen sets this to the phone's vibration). */
+    var onBump: (() -> Unit)? = null
     private val nf = NumberFormat.getIntegerInstance(Locale.US)
     fun fmt(v: Long): String = nf.format(v)
 
@@ -72,8 +74,12 @@ class Session(context: Context) {
         for (e in game.events) when (e.type) {
             Ev.LAUNCH -> sounds.play("launch", 0.6f + 0.4f * e.value / 100f)
             Ev.FLIP -> sounds.play("flipper", 0.8f)
-            Ev.BUMPER -> sounds.play("bumper", 1f, 0.94f + 0.06f * e.index)
-            Ev.SLING -> sounds.play("sling")
+            Ev.BUMPER -> { sounds.play("bumper", 1f, 0.94f + 0.06f * e.index); onBump?.invoke() }
+            Ev.SLING -> { sounds.play("sling"); onBump?.invoke() }
+            Ev.SPIN -> sounds.play("spin", 0.8f, 0.9f + 0.2f * (game.spinnerSpeed / 12f).coerceIn(0f, 1f))
+            Ev.KICKBACK_LIT -> { sounds.play("bonus"); say("KICKBACK IS LIT") }
+            Ev.KICKBACK -> { sounds.play("kick"); onBump?.invoke(); say("KICKBACK!") }
+            Ev.JACKPOT -> { sounds.play("multiball"); say("JACKPOT  ${fmt(e.value)}") }
             Ev.TARGET -> sounds.play("target", 1f, 0.9f + 0.07f * e.index)
             Ev.LETTERS_DONE -> say("P · U · F · F !   5,000")
             Ev.LANE -> sounds.play("lane")
@@ -116,10 +122,13 @@ class Session(context: Context) {
  * The moving and lighting parts of the machine in one view (AR or 3D): balls, flippers, plunger and every lamp.
  * It only shows what the engine says; the lamps are small models already in their places, shown or hidden.
  */
-class Machine(private val modelLoader: ModelLoader, private val game: Pinball) {
+class Machine(private val engine: com.google.android.filament.Engine, private val modelLoader: ModelLoader, private val session: Session) {
+    private val game = session.game
     var frame: Node? = null; private set
-    private val balls = ArrayList<ModelNode>()
-    private var flipL: ModelNode? = null; private var flipR: ModelNode? = null; private var plunger: ModelNode? = null
+    private val balls = ArrayList<ModelNode>(); private val shadows = ArrayList<ModelNode>()
+    private val spin = Array(3) { Quaternion() }; private val lastXY = Array(3) { floatArrayOf(Float.NaN, 0f) }
+    private val sinT = kotlin.math.sin(Math.toRadians(Table.TILT_DEG.toDouble())).toFloat(); private val cosT = kotlin.math.cos(Math.toRadians(Table.TILT_DEG.toDouble())).toFloat()
+    private var flipL: ModelNode? = null; private var flipR: ModelNode? = null; private var plunger: ModelNode? = null; private var spinner: ModelNode? = null
     private val lights = HashMap<String, ModelNode>()
     private val tilt = Quaternion.fromAxisAngle(Float3(1f, 0f, 0f), Table.TILT_DEG)
     private fun model(name: String): ModelNode = ModelNode(modelLoader.createModelInstance("models/$name.glb"), autoAnimate = false).also { frame!!.addChildNode(it) }
@@ -127,8 +136,8 @@ class Machine(private val modelLoader: ModelLoader, private val game: Pinball) {
     fun attach(frame: Node) {
         if (this.frame === frame) return
         this.frame = frame
-        repeat(3) { balls.add(model("pp_ball").also { it.isVisible = false }) }
-        flipL = model("pp_flipper"); flipR = model("pp_flipper"); plunger = model("pp_plunger")
+        repeat(3) { balls.add(model("pp_ball").also { it.isVisible = false }); shadows.add(model("pp_ball_shadow").also { it.isVisible = false }) }
+        flipL = model("pp_flipper"); flipR = model("pp_flipper"); plunger = model("pp_plunger"); spinner = model("pp_spinner")
         for (n in LIGHTS) lights[n] = model("pp_light_$n").also { it.isVisible = false }
     }
 
@@ -137,10 +146,17 @@ class Machine(private val modelLoader: ModelLoader, private val game: Pinball) {
         val t = SystemClock.uptimeMillis() / 1000.0
         fun blink(hz: Double) = (t * hz) % 1.0 < 0.5
         balls.forEachIndexed { i, n ->
-            val b = game.balls.getOrNull(i)
-            if (b == null) n.isVisible = false else {
+            val b = game.balls.getOrNull(i); val sh = shadows[i]
+            if (b == null) { n.isVisible = false; sh.isVisible = false; lastXY[i][0] = Float.NaN } else {
+                // the ball turns as far as it has travelled: about the axis lying across its path
+                val dx = if (lastXY[i][0].isNaN()) 0f else b.x - lastXY[i][0]; val dy = if (lastXY[i][0].isNaN()) 0f else b.y - lastXY[i][1]
+                lastXY[i][0] = b.x; lastXY[i][1] = b.y
+                val d = kotlin.math.hypot(dx, dy)
+                if (d > 1e-5f && d < 0.1f) spin[i] = dev.romainguy.kotlin.math.normalize(Quaternion.fromAxisAngle(Float3(-dy / d, sinT * dx / d, -cosT * dx / d), Math.toDegrees((d / Table.BALL_R).toDouble()).toFloat()) * spin[i])
                 val p = Cabinet.at(b.x, b.y, if (b.held > 0f) Table.BALL_R * 0.55f else Table.BALL_R)
-                n.position = Position(p[0], p[1], p[2]); n.isVisible = true
+                n.transform = Transform(position = Position(p[0], p[1], p[2]), quaternion = spin[i]); n.isVisible = true
+                val s = Cabinet.at(b.x + 0.004f, b.y - 0.005f, 0.0012f)
+                sh.transform = Transform(position = Position(s[0], s[1], s[2]), quaternion = tilt); sh.isVisible = b.held <= 0f
             }
         }
         fun flip(n: ModelNode?, f: Flipper) {
@@ -149,8 +165,17 @@ class Machine(private val modelLoader: ModelLoader, private val game: Pinball) {
         }
         flip(flipL, game.left); flip(flipR, game.right)
         Cabinet.at(Table.PLUNGER[0], 0.04f - 0.05f * game.charge, Table.BALL_R).let { p -> plunger?.transform = Transform(position = Position(p[0], p[1], p[2]), quaternion = tilt) }
+        Cabinet.at((Table.SPINNER[0] + Table.SPINNER[1]) / 2, Table.SPINNER[2], 0.032f).let { p ->
+            spinner?.transform = Transform(position = Position(p[0], p[1], p[2]), quaternion = tilt * Quaternion.fromAxisAngle(Float3(1f, 0f, 0f), game.spinnerAngle * 360f % 360f)) }
+        paintDisplay()
         // the lamps
         fun set(name: String, on: Boolean) { lights[name]?.let { if (it.isVisible != on) it.isVisible = on } }
+        if (game.show > 0f) {
+            // a big moment: every lamp on the table flashes, half of them at a time
+            val k = (t * 12).toInt()
+            LIGHTS.forEachIndexed { i, n -> set(n, (i + k) % 2 == 0) }
+            return
+        }
         if (game.gameOver) {
             // attract mode: the lights chase round the table
             val k = (t * 6).toInt()
@@ -164,10 +189,57 @@ class Machine(private val modelLoader: ModelLoader, private val game: Pinball) {
         set("saucer", game.balls.any { it.held > 0f } || blink(1.0))
         set("save", game.ballSave > 0f && (game.ballSave > 3f || blink(5.0)))
         set("multiball", game.multiball && blink(3.0))
+        set("kick", game.kickbackLit || game.kickFlash < 0.35f)
         for (k in 2..6) set("mult$k", game.multiplier >= k)
     }
 
+    // ---------------- the score display in the backbox ----------------
+    private var dispMat: com.google.android.filament.MaterialInstance? = null
+    private var dispTex: com.google.android.filament.Texture? = null
+    private var dispKey = ""; private var dispAt = 0L
+    private val dispSampler = com.google.android.filament.TextureSampler(com.google.android.filament.TextureSampler.MinFilter.LINEAR, com.google.android.filament.TextureSampler.MagFilter.LINEAR, com.google.android.filament.TextureSampler.WrapMode.CLAMP_TO_EDGE)
+    private val bmp = android.graphics.Bitmap.createBitmap(512, 128, android.graphics.Bitmap.Config.ARGB_8888)
+    private val flipRows = android.graphics.Matrix().apply { setScale(1f, -1f); postTranslate(0f, 128f) }
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD); textAlign = android.graphics.Paint.Align.CENTER }
+
+    /** The cabinet model is loaded: take hold of the display in its backbox (the mesh named "Display"). */
+    fun bindDisplay(cabinet: com.google.android.filament.gltfio.FilamentInstance) {
+        if (dispMat != null) return
+        runCatching {
+            val rm = engine.renderableManager; val e = cabinet.asset.getFirstEntityByName("Display")
+            if (e != 0 && rm.hasComponent(e)) {
+                dispTex = com.google.android.filament.Texture.Builder().width(512).height(128).levels(1).sampler(com.google.android.filament.Texture.Sampler.SAMPLER_2D).format(com.google.android.filament.Texture.InternalFormat.SRGB8_A8).build(engine)
+                dispMat = rm.getMaterialInstanceAt(rm.getInstance(e), 0); dispKey = ""
+            }
+        }.onFailure { android.util.Log.w("PuffPuff", "no display", it) }
+    }
+    /** Paint the score (or the words flashing up) in orange dots, like the display of a real machine. Only when it changes. */
+    private fun paintDisplay() {
+        val mat = dispMat ?: return; val tex = dispTex ?: return
+        val now = SystemClock.uptimeMillis()
+        val flashing = now - session.messageAt < 2400 && session.message.isNotEmpty()
+        val big = if (flashing && (now - session.messageAt) / 300 % 4 != 3L) session.message else if (game.gameOver && now / 1500 % 2 == 0L) "PRESS START" else session.fmt(game.score)
+        val small = if (game.gameOver) "HIGH SCORE  ${session.fmt(session.highScore)}" else "BALL ${game.ballNo}    BONUS x${game.multiplier}" + (if (game.multiball) "    MULTIBALL" else "")
+        val key = "$big|$small"
+        if (key == dispKey || now - dispAt < 90) return
+        dispKey = key; dispAt = now
+        runCatching {
+            val c = android.graphics.Canvas(bmp); c.drawColor(android.graphics.Color.rgb(18, 5, 0))
+            paint.color = android.graphics.Color.rgb(255, 122, 26)
+            paint.textSize = 66f; while (paint.measureText(big) > 490f && paint.textSize > 20f) paint.textSize -= 3f
+            c.drawText(big, 256f, 70f, paint)
+            paint.textSize = 26f; paint.color = android.graphics.Color.rgb(255, 170, 90); c.drawText(small, 256f, 112f, paint)
+            // the gaps between the dots
+            paint.color = android.graphics.Color.argb(120, 18, 5, 0); paint.strokeWidth = 1f
+            var i = 0f; while (i < 512f) { c.drawLine(i, 0f, i, 128f, paint); i += 4f }; i = 0f; while (i < 128f) { c.drawLine(0f, i, 512f, i, paint); i += 4f }
+            // the model's picture coordinates run bottom-up: upload the rows flipped
+            val up = android.graphics.Bitmap.createBitmap(bmp, 0, 0, 512, 128, flipRows, false)
+            com.google.android.filament.android.TextureHelper.setBitmap(engine, tex, 0, up)
+            runCatching { mat.setParameter("baseColorMap", tex, dispSampler) }; runCatching { mat.setParameter("emissiveMap", tex, dispSampler) }
+        }.onFailure { android.util.Log.w("PuffPuff", "display paint failed", it); dispMat = null }
+    }
+
     companion object {
-        val LIGHTS = listOf("lane0", "lane1", "lane2", "letter0", "letter1", "letter2", "letter3", "bumper0", "bumper1", "bumper2", "sling0", "sling1", "saucer", "save", "multiball", "mult2", "mult3", "mult4", "mult5", "mult6")
+        val LIGHTS = listOf("lane0", "lane1", "lane2", "letter0", "letter1", "letter2", "letter3", "bumper0", "bumper1", "bumper2", "sling0", "sling1", "saucer", "save", "multiball", "kick", "mult2", "mult3", "mult4", "mult5", "mult6")
     }
 }

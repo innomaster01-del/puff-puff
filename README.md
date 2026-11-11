@@ -13,6 +13,8 @@ Install: take `PUFF-PUFF.apk` from the latest release.
 - **Pop bumpers** 100; after 20 hits in one ball they are super bumpers, 300. Slingshots 10.
 - **P · U · F · F** targets 250 each; all four: 5,000 and **PUFF PUFF MULTIBALL** (two balls, everything scores double).
 - **The cloud** holds the ball and gives a mystery award: points, a multiplier step, or an extra ball (once a game).
+  In multiball it is the **JACKPOT**: 10,000, doubled.
+- **The spinner** in the left lane scores 100 a turn; thirty turns in one ball light the **KICKBACK** in the left outlane.
 - End of ball: bonus = (bumper hits × 20 + targets × 100 + lanes × 100) × multiplier. Extra ball at 100,000.
 - **NUDGE** shoves the table; three inside four seconds is a **TILT** (dead flippers, no bonus).
 

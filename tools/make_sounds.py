@@ -38,4 +38,5 @@ save('extra', mix(1.0, [(i * 0.12, bell(f, 0.5, 6), 0.7) for i, f in enumerate([
 save('tilt', mix(0.9, [(0, tone(82, 0.85, 2.0, 'square'), 0.8), (0, tone(87, 0.85, 2.0, 'square'), 0.6)]), 0.7)
 save('nudge', mix(0.15, [(0, tone(60, 0.14, 22), 1.0), (0, thock(0.5), 0.5)]), 0.8)
 save('gameover', mix(1.6, [(i * 0.22, bell(f, 0.7, 4.5), 0.7) for i, f in enumerate([784, 659, 523, 392])]), 0.75)
+save('spin', mix(0.05, [(0, band(0.03, 2500, 9000) * np.exp(-T(0.03) * 160), 1.0), (0, tone(2100, 0.04, 70), 0.5)]), 0.45)
 save('start', mix(0.9, [(i * 0.08, bell(f, 0.4, 8), 0.7) for i, f in enumerate([392, 523, 659, 784, 1047, 1319])]), 0.75)

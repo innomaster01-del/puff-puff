@@ -11,6 +11,7 @@ import kotlin.math.sqrt
 
 /** Things that happened in a step: the screen turns them into sounds, lights and words. */
 enum class Ev { LAUNCH, FLIP, BUMPER, SLING, TARGET, LETTERS_DONE, LANE, LANES_DONE, SKILL_SHOT, SAUCER_IN, SAUCER_OUT, MULTIBALL, MULTIBALL_END, SUPER_BUMPERS,
+    SPIN, KICKBACK_LIT, KICKBACK, JACKPOT,
     BALL_SAVED, DRAIN, BONUS, EXTRA_BALL, NUDGE, TILT_WARNING, TILT, NEW_BALL, GAME_OVER }
 class Event(val type: Ev, val index: Int = 0, val value: Long = 0)
 
@@ -51,7 +52,9 @@ class Flipper(val px: Float, val py: Float, private val left: Boolean) {
  *  · Standup targets P · U · F · F: 250 each; light all four for 5,000 and PUFF PUFF MULTIBALL — a second ball, and
  *    everything scores double until one of them drains.
  *  · The cloud saucer holds the ball and gives the next award in its row: 1,000 · +1 multiplier · 2,500 · extra ball
- *    (once a game) · 5,000.
+ *    (once a game) · 5,000. During multiball it is the JACKPOT instead: 10,000 (doubled like everything else).
+ *  · The spinner in the left lane: 100 a turn. Thirty turns in one ball light the KICKBACK, which throws a ball
+ *    that falls down the left outlane back into play, once.
  *  · When a ball drains: bonus = (bumper hits × 20 + targets × 100 + lanes × 100) × multiplier. An extra ball is also
  *    given once at 100,000 points.
  *  · Nudge to shove the ball; three nudges inside four seconds is a TILT: the flippers go dead and the bonus is lost.
@@ -77,6 +80,11 @@ class Pinball(private val seed: Long = System.nanoTime()) {
     var charge = 0f; private set             // 0..1 while the plunger is held
     var lastBonus = 0L; private set
     var time = 0f; private set
+    /** The spinner: its angle in turns, how fast it is turning (turns a second), turns made this ball. */
+    var spinnerAngle = 0f; private set; var spinnerSpeed = 0f; private set; var spins = 0; private set
+    var kickbackLit = false; private set
+    /** Seconds left of the light show after a big moment (every lamp flashes). */
+    var show = 0f; private set; var kickFlash = 9f; private set
     /** Seconds since each bumper / slingshot was hit (for its flash). */
     val bumperFlash = FloatArray(3) { 9f }; val slingFlash = FloatArray(2) { 9f }; val targetFlash = FloatArray(4) { 9f }
     private var saucerStep = 0; private var extraFromSaucer = false; private var extraFromScore = false
@@ -95,7 +103,7 @@ class Pinball(private val seed: Long = System.nanoTime()) {
         newBall(true)
     }
     private fun newBall(next: Boolean) {
-        if (next) { ballNo++; multiplier = 1; bumperHits = 0; targetHits = 0; laneHits = 0; superBumpers = false; lanes.fill(false); letters.fill(false) }
+        if (next) { ballNo++; multiplier = 1; bumperHits = 0; targetHits = 0; laneHits = 0; superBumpers = false; lanes.fill(false); letters.fill(false); spins = 0; kickbackLit = false }
         multiball = false; tilted = false; ballSave = 0f; saveGiven = false; skillLane = 1; nudges.clear(); pendingBalls = 0
         feed(); events.add(Event(Ev.NEW_BALL, ballNo, if (next) 0 else 1))      // value 1 = the same ball again (an extra ball)
     }
@@ -149,6 +157,12 @@ class Pinball(private val seed: Long = System.nanoTime()) {
         if (charging) charge = min(1f, charge + dt / 1.1f)
         if (ballSave > 0f) ballSave = max(0f, ballSave - dt)
         for (i in 0..2) bumperFlash[i] += dt; for (i in 0..1) slingFlash[i] += dt; for (i in 0..3) targetFlash[i] += dt
+        if (show > 0f) show = max(0f, show - dt); kickFlash += dt
+        // the spinner turns on, slowing down; every whole turn scores
+        if (spinnerSpeed > 0.05f) {
+            val before = spinnerAngle.toInt(); spinnerAngle += spinnerSpeed * dt; spinnerSpeed *= 1f - 1.5f * dt
+            repeat(spinnerAngle.toInt() - before) { spins++; add(100); events.add(Event(Ev.SPIN)); if (!kickbackLit && spins == 30) { kickbackLit = true; events.add(Event(Ev.KICKBACK_LIT)) } }
+        } else if (spinnerSpeed != 0f) { spinnerSpeed = 0f; spinnerAngle = Math.round(spinnerAngle * 2f) / 2f }       // it comes to rest flat
         left.step(dt); right.step(dt)
         if (pendingBalls > 0) { feedIn -= dt; if (feedIn <= 0f && balls.none { !it.inField }) { val b = Ball(Table.PLUNGER[0], Table.PLUNGER[1]); b.vy = 2.55f; balls.add(b); pendingBalls--; feedIn = 0.8f } }
         var i = 0
@@ -205,6 +219,10 @@ class Pinball(private val seed: Long = System.nanoTime()) {
         // top lanes: rolling down through the middle of one
         if (b.inField && b.y < Table.LANE_Y1 && b.y > Table.LANE_Y0 && b.y - b.vy * dt >= (Table.LANE_Y0 + Table.LANE_Y1) / 2 && b.y < (Table.LANE_Y0 + Table.LANE_Y1) / 2)
             for (k in 0..2) if (abs(b.x - Table.LANES[k]) < 0.027f) lane(k)
+        // through the spinner: the faster the ball, the longer it turns
+        if (b.inField && b.x > Table.SPINNER[0] && b.x < Table.SPINNER[1] && (b.y - Table.SPINNER[2]) * (b.y - b.vy * dt - Table.SPINNER[2]) < 0f) spinnerSpeed = max(spinnerSpeed, abs(b.vy) * 7f)
+        // the kickback, when it is lit, throws a ball in the left outlane back up the table
+        if (kickbackLit && b.inField && b.x < 0.045f && b.y < Table.KICKBACK[1] && b.vy < 0f) { kickbackLit = false; kickFlash = 0f; b.vy = 2.9f; b.vx = 0.12f; events.add(Event(Ev.KICKBACK)) }
         // the cloud saucer catches a ball that is not going too fast
         if (b.inField && hypot(b.x - Table.SAUCER[0], b.y - Table.SAUCER[1]) < Table.SAUCER_R && hypot(b.vx, b.vy) < 1.3f) saucer(b)
         // a ball that has stopped somewhere it should not: free it, as a real table's ball search does
@@ -260,17 +278,18 @@ class Pinball(private val seed: Long = System.nanoTime()) {
         letters[k] = true; add(250); events.add(Event(Ev.TARGET, k))
         if (letters.all { it }) {
             letters.fill(false); add(5000); events.add(Event(Ev.LETTERS_DONE))
-            if (!multiball && !tilted) { multiball = true; pendingBalls = 1; feedIn = 1.2f; events.add(Event(Ev.MULTIBALL)) }
+            if (!multiball && !tilted) { multiball = true; pendingBalls = 1; feedIn = 1.2f; show = 2.2f; events.add(Event(Ev.MULTIBALL)) }
         }
     }
     private fun saucer(b: Ball) {
         b.held = 1.3f; b.vx = 0f; b.vy = 0f; b.x = Table.SAUCER[0]; b.y = Table.SAUCER[1]
+        if (multiball) { add(10_000); show = 1.6f; events.add(Event(Ev.JACKPOT, 0, 20_000)); return }
         var award = saucerStep % 5; saucerStep++
         if (award == 3 && extraFromSaucer) { award = saucerStep % 5; saucerStep++ }
         when (award) {
             0 -> add(1000); 2 -> add(2500); 4 -> add(5000)
             1 -> if (multiplier < 6) multiplier++ else add(1000)
-            3 -> { extraFromSaucer = true; extraBalls++; events.add(Event(Ev.EXTRA_BALL)) }
+            3 -> { extraFromSaucer = true; extraBalls++; show = 1.6f; events.add(Event(Ev.EXTRA_BALL)) }
         }
         events.add(Event(Ev.SAUCER_IN, award))
     }

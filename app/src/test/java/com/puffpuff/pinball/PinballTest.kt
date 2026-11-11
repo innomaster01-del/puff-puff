@@ -89,6 +89,27 @@ class PinballTest {
         drain(); assertEquals(2, g.ballNo); drain(); assertEquals(3, g.ballNo); drain(); assertTrue(g.gameOver)
         assertTrue(g.events.any { it.type == Ev.GAME_OVER })
     }
+    @Test fun spinnerScoresAndLightsTheKickback() {
+        val g = Pinball(21); g.start(); val b = g.balls[0]; b.inField = true
+        var passes = 0
+        while (!g.kickbackLit && passes < 12) {                                   // fast passes down the left lane, the ball lifted out again each time
+            passes++; b.x = 0.03f; b.y = Table.SPINNER[2] + 0.03f; b.vx = 0f; b.vy = -2.2f
+            var t = 0
+            while (!g.kickbackLit && t++ < 120 * 4) { g.step(1f / 120); g.events.clear(); if (b.y < 0.5f) { b.y = 0.5f; b.x = 0.2f; b.vx = 0f; b.vy = 0f } }
+        }
+        assertTrue("spins counted: ${g.spins}", g.spins >= 30); assertTrue(g.kickbackLit); assertTrue(g.score >= 3000)
+        // a lit kickback throws the ball back out of the left outlane, once
+        val q = g.balls[0]; q.x = 0.022f; q.y = 0.2f; q.vx = 0f; q.vy = -0.8f
+        var kicked = false; repeat(120) { g.step(1f / 120); if (g.events.any { it.type == Ev.KICKBACK }) kicked = true }
+        assertTrue(kicked); assertFalse(g.kickbackLit); assertTrue("the ball is back in play", g.balls.isNotEmpty() && g.balls[0].y > 0.2f)
+    }
+    @Test fun saucerIsTheJackpotInMultiball() {
+        val g = Pinball(23); g.start()
+        for (k in 0..3) { val t = Table.TARGETS[k]; val b = g.balls[0]; b.inField = true; b.x = t[0] + t[2] * 0.05f; b.y = t[1]; b.vx = -t[2] * 1.2f; b.vy = 0f; repeat(20) { g.step(1f / 120) } }
+        assertTrue(g.multiball); val before = g.score
+        val b = g.balls[0]; b.x = Table.SAUCER[0]; b.y = Table.SAUCER[1] + 0.005f; b.vx = 0f; b.vy = -0.1f; repeat(10) { g.step(1f / 120) }
+        assertTrue(g.events.any { it.type == Ev.JACKPOT }); assertEquals(before + 20_000, g.score); assertTrue(g.show > 0f)
+    }
     @Test fun threeNudgesTilt() {
         val g = Pinball(17); g.start(); g.balls[0].inField = true; g.balls[0].y = 0.5f; g.balls[0].x = 0.2f
         g.nudge(); assertFalse(g.tilted); g.nudge(); assertTrue(g.events.any { it.type == Ev.TILT_WARNING }); g.nudge(); assertTrue(g.tilted)

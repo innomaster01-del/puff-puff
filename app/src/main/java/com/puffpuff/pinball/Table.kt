@@ -31,6 +31,10 @@ object Table {
     val TARGETS = arrayOf(floatArrayOf(0.012f, 0.56f, 1f), floatArrayOf(0.012f, 0.49f, 1f), floatArrayOf(FIELD_R - 0.012f, 0.49f, -1f), floatArrayOf(FIELD_R - 0.012f, 0.56f, -1f)); const val TARGET_H = 0.022f
     val SAUCER = floatArrayOf(0.075f, 0.775f); const val SAUCER_R = 0.014f
     val PLUNGER = floatArrayOf((FIELD_R + W) / 2, 0.04f + BALL_R)
+    /** The spinner: a small gate across the left side lane; a ball going through sets it turning. x0, x1, y. */
+    val SPINNER = floatArrayOf(0.006f, 0.058f, 0.665f)
+    /** The kickback sits at the bottom of the left outlane. */
+    val KICKBACK = floatArrayOf(0.0225f, 0.10f)
     const val DRAIN_Y = 0.03f
 
     /** kind: 0 wall · 1 slingshot face (kicks) · 2 standup target · 3 the one-way gate at the top of the shooter lane */
@@ -79,6 +83,7 @@ object Cabinet {
   "bumpers": ${arr2(Table.BUMPERS)}, "bumperR": ${Table.BUMPER_R}, "posts": ${arr2(Table.POSTS)}, "postR": ${Table.POST_R},
   "laneGuides": ${arr(Table.LANE_GUIDES)}, "lanes": ${arr(Table.LANES)}, "laneY0": ${Table.LANE_Y0}, "laneY1": ${Table.LANE_Y1},
   "targets": ${arr2(Table.TARGETS)}, "targetH": ${Table.TARGET_H}, "saucer": ${arr(Table.SAUCER)}, "saucerR": ${Table.SAUCER_R}, "plunger": ${arr(Table.PLUNGER)},
+  "spinner": ${arr(Table.SPINNER)}, "kickback": ${arr(Table.KICKBACK)},
   "segs": $segs
 }
 """

@@ -11,8 +11,8 @@ android {
         applicationId = "com.puffpuff.pinball"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
         resValue("string", "app_name", "PUFF PUFF")
     }
     // fixed sideload key, so a new APK installs over the old one (not a Play Store key)

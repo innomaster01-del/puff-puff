@@ -200,8 +200,8 @@ private fun Puff3D(session: Session, onAr: () -> Unit) {
     val machine = remember { Machine(engine, modelLoader, session) }
     val cabinet = rememberModelInstance(modelLoader, "models/pp_cabinet.glb")
     val frameRef = remember { Ref<io.github.sceneview.node.Node?>(null) }
-    // three places to stand, then drag and pinch from there
-    val views = listOf(Triple("Player", Position(0f, 1.58f, 1.22f), Position(0f, 0.92f, -0.05f)), Triple("Close", Position(0f, 1.3f, 0.86f), Position(0f, 0.9f, 0.2f)),
+    // places to stand, then drag and pinch from there. "Full" takes in the whole table, the shooter lane and the score display
+    val views = listOf(Triple("Full", Position(0f, 2.25f, 1.75f), Position(0f, 1.0f, 0f)), Triple("Player", Position(0f, 1.58f, 1.22f), Position(0f, 0.92f, -0.05f)), Triple("Close", Position(0f, 1.3f, 0.86f), Position(0f, 0.9f, 0.2f)),
         Triple("Top", Position(0f, 2.35f, 0.08f), Position(0f, 0.9f, 0f)), Triple("Whole", Position(1.5f, 1.7f, 2.1f), Position(0f, 1.0f, -0.2f)))
     var which by remember { mutableIntStateOf(0) }
     val cameraNode = rememberCameraNode(engine) { position = views[0].second; lookAt(views[0].third) }
@@ -239,16 +239,13 @@ private fun Hud(session: Session, extras: @Composable () -> Unit) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     DisposableEffect(session) { session.onBump = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress) }; onDispose { session.onBump = null } }
     Box(Modifier.fillMaxSize()) {
-        // the display
-        Column(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Column(Modifier.clip(RoundedCornerShape(16.dp)).background(NIGHT).border(2.dp, PINK, RoundedCornerShape(16.dp)).padding(horizontal = 18.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(session.fmt(session.score), color = YELLOW, fontSize = 38.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
-                Text(if (session.gameOver) "HIGH SCORE ${session.fmt(session.highScore)}" else "BALL ${session.ballNo} of 3   ·   BONUS ×${session.multiplier}" + (if (session.extraBalls > 0) "   ·   EXTRA BALL" else ""),
-                    color = CYAN, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        // the score is on the machine's own display; up here there is only a small menu button, and the menu opens under it
+        var menu by remember { mutableStateOf(false) }
+        Column(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.size(44.dp).clip(CircleShape).background(NIGHT).border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape).pointerInput(Unit) { detectTapGestures(onTap = { menu = !menu }) }, contentAlignment = Alignment.Center) {
+                Text(if (menu) "✕" else "☰", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             }
-            val flags = listOfNotNull("BALL SAVE".takeIf { session.saving }, "MULTIBALL ×2".takeIf { session.multiball }, "TILT".takeIf { session.tilted })
-            if (flags.isNotEmpty()) Pill(flags.joinToString("   ·   "))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (menu) {
                 extras()
                 Small(if (session.sounds.muted) "Sound: off" else "Sound: on") { session.sounds.muted = !session.sounds.muted; now = SystemClock.uptimeMillis() }
             }

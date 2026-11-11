@@ -11,7 +11,7 @@ import kotlin.math.sqrt
 
 /** Things that happened in a step: the screen turns them into sounds, lights and words. */
 enum class Ev { LAUNCH, FLIP, BUMPER, SLING, TARGET, LETTERS_DONE, LANE, LANES_DONE, SKILL_SHOT, SAUCER_IN, SAUCER_OUT, MULTIBALL, MULTIBALL_END, SUPER_BUMPERS,
-    SPIN, KICKBACK_LIT, KICKBACK, JACKPOT,
+    SPIN, KICKBACK_LIT, KICKBACK, JACKPOT, RUSH, RUSH_END,
     BALL_SAVED, DRAIN, BONUS, EXTRA_BALL, NUDGE, TILT_WARNING, TILT, NEW_BALL, GAME_OVER }
 class Event(val type: Ev, val index: Int = 0, val value: Long = 0)
 
@@ -59,7 +59,13 @@ class Flipper(val px: Float, val py: Float, private val left: Boolean) {
  *    given once at 100,000 points.
  *  · Nudge to shove the ball; three nudges inside four seconds is a TILT: the flippers go dead and the bonus is lost.
  */
-class Pinball(private val seed: Long = System.nanoTime()) {
+/**
+ * What differs between the machines: how many balls multiball adds, and whether lighting the three top lanes also starts
+ * a rush (so many seconds in which everything scores double).
+ */
+class Rules(val multiballExtra: Int = 1, val rushSeconds: Float = 0f)
+
+class Pinball(private val seed: Long = System.nanoTime(), val rules: Rules = Rules()) {
     val balls = ArrayList<Ball>()
     val left = Flipper(Table.FLIP_L[0], Table.FLIP_L[1], true); val right = Flipper(Table.FLIP_RT[0], Table.FLIP_RT[1], false)
     val events = ArrayList<Event>()
@@ -83,6 +89,8 @@ class Pinball(private val seed: Long = System.nanoTime()) {
     /** The spinner: its angle in turns, how fast it is turning (turns a second), turns made this ball. */
     var spinnerAngle = 0f; private set; var spinnerSpeed = 0f; private set; var spins = 0; private set
     var kickbackLit = false; private set
+    /** Seconds of rush left (machines that have one): everything scores double. */
+    var rush = 0f; private set
     /** Seconds left of the light show after a big moment (every lamp flashes). */
     var show = 0f; private set; var kickFlash = 9f; private set
     /** Seconds since each bumper / slingshot was hit (for its flash). */
@@ -104,7 +112,7 @@ class Pinball(private val seed: Long = System.nanoTime()) {
     }
     private fun newBall(next: Boolean) {
         if (next) { ballNo++; multiplier = 1; bumperHits = 0; targetHits = 0; laneHits = 0; superBumpers = false; lanes.fill(false); letters.fill(false); spins = 0; kickbackLit = false }
-        multiball = false; tilted = false; ballSave = 0f; saveGiven = false; skillLane = 1; nudges.clear(); pendingBalls = 0
+        multiball = false; tilted = false; ballSave = 0f; saveGiven = false; skillLane = 1; nudges.clear(); pendingBalls = 0; rush = 0f
         feed(); events.add(Event(Ev.NEW_BALL, ballNo, if (next) 0 else 1))      // value 1 = the same ball again (an extra ball)
     }
     private fun feed() { balls.add(Ball(Table.PLUNGER[0], Table.PLUNGER[1])) }
@@ -141,7 +149,7 @@ class Pinball(private val seed: Long = System.nanoTime()) {
 
     private fun add(points: Long) {
         if (tilted) return
-        score += points * (if (multiball) 2 else 1)
+        score += points * (if (multiball) 2 else 1) * (if (rush > 0f) 2 else 1)
         if (!extraFromScore && score >= 100_000) { extraFromScore = true; extraBalls++; events.add(Event(Ev.EXTRA_BALL)) }
     }
 
@@ -158,6 +166,7 @@ class Pinball(private val seed: Long = System.nanoTime()) {
         if (ballSave > 0f) ballSave = max(0f, ballSave - dt)
         for (i in 0..2) bumperFlash[i] += dt; for (i in 0..1) slingFlash[i] += dt; for (i in 0..3) targetFlash[i] += dt
         if (show > 0f) show = max(0f, show - dt); kickFlash += dt
+        if (rush > 0f) { rush = max(0f, rush - dt); if (rush == 0f) events.add(Event(Ev.RUSH_END)) }
         // the spinner turns on, slowing down; every whole turn scores
         if (spinnerSpeed > 0.05f) {
             val before = spinnerAngle.toInt(); spinnerAngle += spinnerSpeed * dt; spinnerSpeed *= 1f - 1.5f * dt
@@ -270,7 +279,10 @@ class Pinball(private val seed: Long = System.nanoTime()) {
         if (skillLane >= 0) { if (k == skillLane) { add(2500); events.add(Event(Ev.SKILL_SHOT, k, 2500)) }; skillLane = -1 }
         if (lanes[k]) { add(50); events.add(Event(Ev.LANE, k)); return }
         lanes[k] = true; add(200); events.add(Event(Ev.LANE, k))
-        if (lanes.all { it }) { lanes.fill(false); if (multiplier < 6) multiplier++; add(1000); events.add(Event(Ev.LANES_DONE, multiplier)) }
+        if (lanes.all { it }) {
+            lanes.fill(false); if (multiplier < 6) multiplier++; add(1000); events.add(Event(Ev.LANES_DONE, multiplier))
+            if (rules.rushSeconds > 0f && !tilted) { rush = rules.rushSeconds; show = 1.2f; events.add(Event(Ev.RUSH)) }
+        }
     }
     private fun target(k: Int) {
         targetFlash[k] = 0f; targetHits++
@@ -278,7 +290,7 @@ class Pinball(private val seed: Long = System.nanoTime()) {
         letters[k] = true; add(250); events.add(Event(Ev.TARGET, k))
         if (letters.all { it }) {
             letters.fill(false); add(5000); events.add(Event(Ev.LETTERS_DONE))
-            if (!multiball && !tilted) { multiball = true; pendingBalls = 1; feedIn = 1.2f; show = 2.2f; events.add(Event(Ev.MULTIBALL)) }
+            if (!multiball && !tilted) { multiball = true; pendingBalls = rules.multiballExtra; feedIn = 1.2f; show = 2.2f; events.add(Event(Ev.MULTIBALL)) }
         }
     }
     private fun saucer(b: Ball) {

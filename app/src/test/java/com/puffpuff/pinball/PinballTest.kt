@@ -110,6 +110,26 @@ class PinballTest {
         val b = g.balls[0]; b.x = Table.SAUCER[0]; b.y = Table.SAUCER[1] + 0.005f; b.vx = 0f; b.vy = -0.1f; repeat(10) { g.step(1f / 120) }
         assertTrue(g.events.any { it.type == Ev.JACKPOT }); assertEquals(before + 20_000, g.score); assertTrue(g.show > 0f)
     }
+    @Test fun outbreakIsThreeBalls() {
+        val g = Pinball(25, Rules(multiballExtra = 2)); g.start()
+        for (k in 0..3) { val t = Table.TARGETS[k]; val b = g.balls[0]; b.inField = true; b.x = t[0] + t[2] * 0.05f; b.y = t[1]; b.vx = -t[2] * 1.2f; b.vy = 0f; repeat(20) { g.step(1f / 120) } }
+        assertTrue(g.multiball); var most = 0
+        repeat(120 * 6) { g.balls[0].let { b -> if (b.inField && b.y < 0.3f) { b.y = 0.6f; b.x = 0.2f; b.vx = 0f; b.vy = 0.2f } }; g.step(1f / 120); most = maxOf(most, g.balls.size) }
+        assertEquals("three balls in play at once", 3, most)
+    }
+    @Test fun rushDoublesTheScoreForAWhile() {
+        val g = Pinball(27, Rules(rushSeconds = 20f)); g.start()
+        for (k in 0..2) { val b = g.balls[0]; b.inField = true; b.x = Table.LANES[k]; b.y = Table.LANE_Y1 + 0.02f; b.vx = 0f; b.vy = -0.4f; repeat(40) { g.step(1f / 120) } }
+        assertTrue(g.events.any { it.type == Ev.RUSH }); assertTrue(g.rush > 15f)
+        val b = g.balls[0]; val before = g.score; val hits = g.bumperHits
+        b.x = Table.BUMPERS[2][0]; b.y = Table.BUMPERS[2][1] + 0.05f; b.vx = 0f; b.vy = -0.5f; repeat(12) { g.step(1f / 120) }
+        assertEquals(hits + 1, g.bumperHits); assertEquals(before + 200, g.score)                    // a bumper is 100: doubled
+        b.y = 0.5f; b.x = 0.2f; b.vx = 0f; b.vy = 0f; var t = 0; while (g.rush > 0f && t++ < 120 * 25) { g.step(1f / 120); if (b.y < 0.4f) { b.y = 0.5f; b.vy = 0f } }
+        assertEquals(0f, g.rush, 0f); assertTrue(g.events.any { it.type == Ev.RUSH_END })
+        // a machine without a rush never starts one
+        val p = Pinball(27); p.start(); for (k in 0..2) { val q = p.balls[0]; q.inField = true; q.x = Table.LANES[k]; q.y = Table.LANE_Y1 + 0.02f; q.vx = 0f; q.vy = -0.4f; repeat(40) { p.step(1f / 120) } }
+        assertEquals(0f, p.rush, 0f); assertFalse(p.events.any { it.type == Ev.RUSH })
+    }
     @Test fun threeNudgesTilt() {
         val g = Pinball(17); g.start(); g.balls[0].inField = true; g.balls[0].y = 0.5f; g.balls[0].x = 0.2f
         g.nudge(); assertFalse(g.tilted); g.nudge(); assertTrue(g.events.any { it.type == Ev.TILT_WARNING }); g.nudge(); assertTrue(g.tilted)

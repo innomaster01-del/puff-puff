@@ -38,9 +38,9 @@ class Sounds(context: Context) : AutoCloseable {
  * The game as the screen sees it: the engine, the numbers on the display and the words that flash up. It lives above
  * the AR and the 3D views, so switching between them keeps the game going.
  */
-class Session(context: Context) {
+class Session(context: Context, val theme: Theme) {
     private val prefs = context.getSharedPreferences("puffpuff", Context.MODE_PRIVATE)
-    val game = Pinball()
+    val game = Pinball(rules = theme.rules)
     val sounds = Sounds(context)
     var score by mutableLongStateOf(0L); private set
     var ballNo by mutableIntStateOf(0); private set
@@ -52,7 +52,7 @@ class Session(context: Context) {
     var saving by mutableStateOf(false); private set
     var multiball by mutableStateOf(false); private set
     var tilted by mutableStateOf(false); private set
-    var highScore by mutableLongStateOf(prefs.getLong("high", 0L)); private set
+    var highScore by mutableLongStateOf(prefs.getLong(theme.highKey, 0L)); private set
     var newHigh by mutableStateOf(false); private set
     /** The words flashing over the table, and when they were put up. */
     var message by mutableStateOf("PRESS START"); private set
@@ -81,14 +81,16 @@ class Session(context: Context) {
             Ev.KICKBACK -> { sounds.play("kick"); onBump?.invoke(); say("KICKBACK!") }
             Ev.JACKPOT -> { sounds.play("multiball"); say("JACKPOT  ${fmt(e.value)}") }
             Ev.TARGET -> sounds.play("target", 1f, 0.9f + 0.07f * e.index)
-            Ev.LETTERS_DONE -> say("P · U · F · F !   5,000")
+            Ev.LETTERS_DONE -> say("${theme.spelled} !   5,000")
             Ev.LANE -> sounds.play("lane")
             Ev.LANES_DONE -> { sounds.play("bonus"); say("BONUS ×${e.index}") }
             Ev.SKILL_SHOT -> { sounds.play("bonus"); say("SKILL SHOT  2,500") }
-            Ev.SAUCER_IN -> { sounds.play("saucer"); say(listOf("MYSTERY  1,000", "MYSTERY  BONUS × UP", "MYSTERY  2,500", "MYSTERY  EXTRA BALL", "MYSTERY  5,000")[e.index]) }
+            Ev.SAUCER_IN -> { sounds.play("saucer"); say(theme.saucer + "  " + listOf("1,000", "BONUS × UP", "2,500", "EXTRA BALL", "5,000")[e.index]) }
             Ev.SAUCER_OUT -> sounds.play("kick")
-            Ev.MULTIBALL -> { sounds.play("multiball"); say("PUFF PUFF MULTIBALL!") }
-            Ev.MULTIBALL_END -> say("MULTIBALL OVER")
+            Ev.MULTIBALL -> { sounds.play("multiball"); say(theme.multiball) }
+            Ev.MULTIBALL_END -> say("BACK TO ONE BALL")
+            Ev.RUSH -> { sounds.play("multiball"); say("${theme.rushName}!  ×2") }
+            Ev.RUSH_END -> say("${theme.rushName} OVER")
             Ev.SUPER_BUMPERS -> { sounds.play("bonus"); say("SUPER BUMPERS  300") }
             Ev.BALL_SAVED -> { sounds.play("saved"); say("BALL SAVED") }
             Ev.DRAIN -> sounds.play("drain")
@@ -100,7 +102,7 @@ class Session(context: Context) {
             Ev.NEW_BALL -> say(if (e.value == 1L) "SHOOT AGAIN" else "BALL ${e.index}")
             Ev.GAME_OVER -> {
                 sounds.play("gameover")
-                if (e.value > highScore) { highScore = e.value; newHigh = true; prefs.edit().putLong("high", highScore).apply(); say("NEW HIGH SCORE!") } else say("GAME OVER")
+                if (e.value > highScore) { highScore = e.value; newHigh = true; prefs.edit().putLong(theme.highKey, highScore).apply(); say("NEW HIGH SCORE!") } else say("GAME OVER")
             }
         }
         game.events.clear()
@@ -131,7 +133,7 @@ class Machine(private val engine: com.google.android.filament.Engine, private va
     private var flipL: ModelNode? = null; private var flipR: ModelNode? = null; private var plunger: ModelNode? = null; private var spinner: ModelNode? = null
     private val lights = HashMap<String, ModelNode>()
     private val tilt = Quaternion.fromAxisAngle(Float3(1f, 0f, 0f), Table.TILT_DEG)
-    private fun model(name: String): ModelNode = ModelNode(modelLoader.createModelInstance("models/$name.glb"), autoAnimate = false).also { frame!!.addChildNode(it) }
+    private fun model(name: String): ModelNode = ModelNode(modelLoader.createModelInstance("models/${session.theme.dir}/$name.glb"), autoAnimate = false).also { frame!!.addChildNode(it) }
 
     fun attach(frame: Node) {
         if (this.frame === frame) return
@@ -219,7 +221,7 @@ class Machine(private val engine: com.google.android.filament.Engine, private va
         val now = SystemClock.uptimeMillis()
         val flashing = now - session.messageAt < 2400 && session.message.isNotEmpty()
         val big = if (flashing && (now - session.messageAt) / 300 % 4 != 3L) session.message else if (game.gameOver && now / 1500 % 2 == 0L) "PRESS START" else session.fmt(game.score)
-        val small = if (game.gameOver) "HIGH SCORE  ${session.fmt(session.highScore)}" else "BALL ${game.ballNo}    BONUS x${game.multiplier}" + (if (game.multiball) "    MULTIBALL" else "")
+        val small = if (game.gameOver) "HIGH SCORE  ${session.fmt(session.highScore)}" else "BALL ${game.ballNo}    BONUS x${game.multiplier}" + (if (game.multiball) "    x2" else "") + (if (game.rush > 0f) "    RUSH ${game.rush.toInt() + 1}" else "")
         val key = "$big|$small"
         if (key == dispKey || now - dispAt < 90) return
         dispKey = key; dispAt = now

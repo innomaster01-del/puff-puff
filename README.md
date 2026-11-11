@@ -1,6 +1,13 @@
 # PUFF PUFF
 
-A pinball machine for your room: real size in AR (ARCore), or in 3D on the screen. Android.
+Three pinball machines for your room: real size in AR (ARCore), or in 3D on the screen. Android.
+
+- **PUFF PUFF** — clouds and a steel ball.
+- **ACHOO ACHOO** — the ball is a virus; spelling G·E·R·M starts a three-ball OUTBREAK.
+- **YUM YUM** — a peppermint ball; lighting the top lanes starts a 20 second SUGAR RUSH (everything double).
+
+The three share one playfield and one physics (`Theme.kt`, `Rules` in `Pinball.kt`); each has its own models in
+`assets/models/<name>` (`export.html?theme=puff|virus|candy`).
 
 Install: take `PUFF-PUFF.apk` from the latest release.
 

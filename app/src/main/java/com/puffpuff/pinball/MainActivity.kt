@@ -89,14 +89,40 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val context = LocalContext.current
-                val session = remember { Session(context) }
-                DisposableEffect(Unit) { onDispose { session.close() } }
+                var theme by remember { mutableStateOf<Theme?>(null) }
                 var ar by remember { mutableStateOf(true) }
                 // the machine has a left and a right: on a phone set to a right-to-left language the screen must not be mirrored,
                 // or the LEFT button lands on the right and works the far flipper
                 androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
-                    if (ar) PuffAr(session) { ar = false } else Puff3D(session) { ar = true }
+                    val th = theme
+                    if (th == null) Menu(context) { theme = it }
+                    else androidx.compose.runtime.key(th) {
+                        // one game per machine picked; it is thrown away when you go back to the machines
+                        val session = remember { Session(context, th) }
+                        DisposableEffect(Unit) { onDispose { session.close() } }
+                        if (ar) PuffAr(session, onThreeD = { ar = false }, onMachines = { theme = null }) else Puff3D(session, onAr = { ar = true }, onMachines = { theme = null })
+                    }
                 }
+            }
+        }
+    }
+}
+
+/** The first screen: the three machines to choose from, each with its best score. */
+@Composable
+private fun Menu(context: android.content.Context, onPick: (Theme) -> Unit) {
+    val prefs = remember { context.getSharedPreferences("puffpuff", android.content.Context.MODE_PRIVATE) }
+    val nf = remember { java.text.NumberFormat.getIntegerInstance(java.util.Locale.US) }
+    Column(Modifier.fillMaxSize().background(Color(0xFF0A0418)).statusBarsPadding().navigationBarsPadding().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("PINBALL", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 14.dp))
+        Text("Pick a machine. It will stand in your room.", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
+        for (t in Theme.entries) {
+            val a = Color(t.colorA); val b = Color(t.colorB); val high = prefs.getLong(t.highKey, 0L)
+            Column(Modifier.fillMaxWidth().widthIn(max = 460.dp).clip(RoundedCornerShape(24.dp)).background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(b.copy(alpha = 0.28f), a.copy(alpha = 0.18f))))
+                .border(2.5.dp, androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(b, a)), RoundedCornerShape(24.dp)).pointerInput(t) { detectTapGestures(onTap = { onPick(t) }) }.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(t.title, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, style = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(color = b, blurRadius = 26f)))
+                Text(t.tagline, color = Color.White.copy(alpha = 0.88f), fontSize = 14.sp)
+                Text(if (high > 0) "BEST  ${nf.format(high)}" else "NOT PLAYED YET", color = a, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -104,7 +130,7 @@ class MainActivity : ComponentActivity() {
 
 /** The machine in your room: real size on the floor (or a small one on a table). */
 @Composable
-private fun PuffAr(session: Session, onThreeD: () -> Unit) {
+private fun PuffAr(session: Session, onThreeD: () -> Unit, onMachines: () -> Unit) {
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
     val materialLoader = rememberMaterialLoader(engine)
@@ -116,7 +142,7 @@ private fun PuffAr(session: Session, onThreeD: () -> Unit) {
         }
     }
     val machine = remember { Machine(engine, modelLoader, session) }
-    val cabinet = rememberModelInstance(modelLoader, "models/pp_cabinet.glb")
+    val cabinet = rememberModelInstance(modelLoader, "models/${session.theme.dir}/pp_cabinet.glb")
     val reticleModel = rememberModelInstance(modelLoader, "models/reticle.glb")
     var anchor by remember { mutableStateOf<Anchor?>(null) }
     var canPlace by remember { mutableStateOf(false) }
@@ -171,7 +197,7 @@ private fun PuffAr(session: Session, onThreeD: () -> Unit) {
         }
         if (anchor == null) {
             Column(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("PUFF PUFF", color = PINK, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                Text(session.theme.title, color = Color(session.theme.colorB), fontSize = 34.sp, fontWeight = FontWeight.Black)
                 Pill(if (!tracking) "Move the phone slowly so it can see the floor" else if (!canPlace) "Aim at the floor where the machine should stand" else "The machine will stand on the ring, facing you")
             }
             Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -181,24 +207,26 @@ private fun PuffAr(session: Session, onThreeD: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Small(if (mini) "Size: tabletop" else "Size: real") { mini = !mini }
                     Small("Play in 3D instead") { onThreeD() }
+                    Small("Machines") { onMachines() }
                 }
             }
         } else Hud(session, extras = {
             Small("Move") { anchor?.detach(); anchor = null }
             Small(if (mini) "Size: tabletop" else "Size: real") { mini = !mini }
             Small("3D view") { onThreeD() }
+            Small("Machines") { onMachines() }
         })
     }
 }
 
 /** The same machine without the camera: turn it, come close, look straight down. */
 @Composable
-private fun Puff3D(session: Session, onAr: () -> Unit) {
+private fun Puff3D(session: Session, onAr: () -> Unit, onMachines: () -> Unit) {
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
     val view = rememberView(engine)
     val machine = remember { Machine(engine, modelLoader, session) }
-    val cabinet = rememberModelInstance(modelLoader, "models/pp_cabinet.glb")
+    val cabinet = rememberModelInstance(modelLoader, "models/${session.theme.dir}/pp_cabinet.glb")
     val frameRef = remember { Ref<io.github.sceneview.node.Node?>(null) }
     // places to stand, then drag and pinch from there. "Full" takes in the whole table, the shooter lane and the score display
     val views = listOf(Triple("Full", Position(0f, 2.25f, 1.75f), Position(0f, 1.0f, 0f)), Triple("Player", Position(0f, 1.58f, 1.22f), Position(0f, 0.92f, -0.05f)), Triple("Close", Position(0f, 1.3f, 0.86f), Position(0f, 0.9f, 0.2f)),
@@ -226,6 +254,7 @@ private fun Puff3D(session: Session, onAr: () -> Unit) {
         Hud(session, extras = {
             Small("View: ${views[which].first}") { which = (which + 1) % views.size }
             Small("AR") { onAr() }
+            Small("Machines") { onMachines() }
         })
     }
 }

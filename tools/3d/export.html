@@ -1,0 +1,31 @@
+<!doctype html><html><body style="margin:0;background:#222"><script type="importmap">{"imports":{"three":"./three/build/three.module.js","three/addons/":"./three/examples/jsm/"}}</script>
+<script type="module">
+// Builds every model of the machine and hands them over as base64 in window.OUT (run in a headless browser; see README).
+import * as THREE from 'three'; import {GLTFExporter} from 'three/addons/exporters/GLTFExporter.js';
+import {createKit} from './model-kit.js'; import * as TB from './table.js';
+try {
+const D=await (await fetch('./layout.json')).json();
+const ex=new GLTFExporter(); const b64=(buf)=>{let s='';const u=new Uint8Array(buf);for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)};
+const out={}; const kit=await createKit(THREE);
+const mk=(o)=>{o.traverse(x=>{const ms=Array.isArray(x.material)?x.material:[x.material]; for(const m of ms) if(m&&m.map)m.map.userData.mimeType='image/jpeg'}); return o};
+const save=async(n,o,opt={})=>{out['models/'+n+'.glb']=b64(await ex.parseAsync(o,{binary:true,...opt}))};
+const cab=await TB.build(THREE,kit,D); mk(cab); cab.getObjectByName('FloorShadow').material.map.userData.mimeType='image/png';
+await save('pp_cabinet',cab,{maxTextureSize:2048}); await save('pp_ball',TB.ball(THREE,kit,D)); await save('pp_flipper',TB.flipper(THREE,kit,D)); await save('pp_plunger',TB.plunger(THREE,kit,D));
+const L=TB.lights(THREE,kit,D); for(const [n,o] of Object.entries(L)) await save('pp_light_'+n,mk(o));
+out['lights.txt']=btoa(Object.keys(L).join('\n'));
+let tris=0; cab.traverse(o=>{if(o.isMesh){const g=o.geometry; tris+=(g.index?g.index.count:g.attributes.position.count)/3}}); console.log('cabinet triangles', Math.round(tris));
+// pictures to look at
+const r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true}); r.setSize(1080,1500); r.toneMapping=THREE.ACESFilmicToneMapping; document.body.appendChild(r.domElement);
+const sc=new THREE.Scene(); sc.background=new THREE.Color('#8a8f98'); sc.add(cab); sc.add(new THREE.HemisphereLight(0xffffff,0x555555,2.0)); const dl=new THREE.DirectionalLight(0xffffff,2.0); dl.position.set(0.6,3,2.5); sc.add(dl);
+const fl=new THREE.Mesh(new THREE.PlaneGeometry(8,8),new THREE.MeshStandardMaterial({color:0xb9b2a6,roughness:0.9})); fl.rotation.x=-Math.PI/2; fl.position.y=-0.001; sc.add(fl);
+const T=THREE.MathUtils.degToRad(D.tilt); const P=(x,y,h)=>new THREE.Vector3(x-D.W/2, D.y0+y*Math.sin(T)+h*Math.cos(T), D.z0-y*Math.cos(T)+h*Math.sin(T));
+const qx=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0),T);
+const flip=(p,deg)=>{const f=TB.flipper(THREE,kit,D); f.position.copy(P(p[0],p[1],0)); f.quaternion.copy(qx).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),THREE.MathUtils.degToRad(deg))); sc.add(f)};
+flip(D.flipL,-30); flip(D.flipRt,180+30);
+const b=TB.ball(THREE,kit,D); b.position.copy(P(0.2,0.52,D.ballR)); sc.add(b); const b2=TB.ball(THREE,kit,D); b2.position.copy(P(D.plunger[0],D.plunger[1],D.ballR)); sc.add(b2);
+for(const n of ['lane1','letter0','letter3','bumper2','sling0','saucer','save','mult3','multiball']) sc.add(L[n]);
+const shot=(name,pos,look,fov=55)=>{const cam=new THREE.PerspectiveCamera(fov,1080/1500,0.02,20); cam.position.set(...pos); cam.lookAt(...look); r.render(sc,cam); out[name]=r.domElement.toDataURL('image/jpeg',0.85).split(',')[1]};
+shot('player.jpg',[0,1.55,1.25],[0,0.9,-0.05]); shot('whole.jpg',[1.5,1.7,2.1],[0,1.0,-0.2],50); shot('top.jpg',[0,2.4,0.1],[0,0.9,0.0],40); shot('low.jpg',[0.05,1.12,0.78],[0,0.92,0.3],50);
+window.OUT=out; window.DONE=1;
+} catch(e){ window.ERR=String(e&&e.stack||e); window.DONE=1; }
+</script></body></html>

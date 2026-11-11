@@ -92,7 +92,11 @@ class MainActivity : ComponentActivity() {
                 val session = remember { Session(context) }
                 DisposableEffect(Unit) { onDispose { session.close() } }
                 var ar by remember { mutableStateOf(true) }
-                if (ar) PuffAr(session) { ar = false } else Puff3D(session) { ar = true }
+                // the machine has a left and a right: on a phone set to a right-to-left language the screen must not be mirrored,
+                // or the LEFT button lands on the right and works the far flipper
+                androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
+                    if (ar) PuffAr(session) { ar = false } else Puff3D(session) { ar = true }
+                }
             }
         }
     }

@@ -40,7 +40,7 @@ class Sounds(context: Context) : AutoCloseable {
  */
 class Session(context: Context, val theme: Theme) {
     private val prefs = context.getSharedPreferences("puffpuff", Context.MODE_PRIVATE)
-    val game = Pinball(rules = theme.rules)
+    val game = Pinball(theme.def)
     val sounds = Sounds(context)
     var score by mutableLongStateOf(0L); private set
     var ballNo by mutableIntStateOf(0); private set
@@ -52,6 +52,8 @@ class Session(context: Context, val theme: Theme) {
     var saving by mutableStateOf(false); private set
     var multiball by mutableStateOf(false); private set
     var tilted by mutableStateOf(false); private set
+    /** Whole seconds left on the clock (VIRUS), shown on the screen as well as on the machine. */
+    var clock by mutableIntStateOf(0); private set
     var highScore by mutableLongStateOf(prefs.getLong(theme.highKey, 0L)); private set
     var newHigh by mutableStateOf(false); private set
     /** The words flashing over the table, and when they were put up. */
@@ -63,7 +65,7 @@ class Session(context: Context, val theme: Theme) {
     private val nf = NumberFormat.getIntegerInstance(Locale.US)
     fun fmt(v: Long): String = nf.format(v)
 
-    fun start() { game.start(); newHigh = false; sounds.play("start"); say("BALL 1"); last = 0L }
+    fun start() { game.start(); newHigh = false; sounds.play("start"); say(if (game.timed) "INFECT!" else "BALL 1"); last = 0L }
     private fun say(text: String) { message = text; messageAt = SystemClock.uptimeMillis() }
 
     /** Run the table up to now and turn what happened into sounds and words. Called once a frame by whichever view is showing. */
@@ -81,7 +83,14 @@ class Session(context: Context, val theme: Theme) {
             Ev.KICKBACK -> { sounds.play("kick"); onBump?.invoke(); say("KICKBACK!") }
             Ev.JACKPOT -> { sounds.play("multiball"); say("JACKPOT  ${fmt(e.value)}") }
             Ev.TARGET -> sounds.play("target", 1f, 0.9f + 0.07f * e.index)
-            Ev.LETTERS_DONE -> say("${theme.spelled} !   5,000")
+            Ev.LETTERS_DONE -> say("P · U · F · F !   5,000")
+            Ev.CELL -> { sounds.play("target", 1f, 1.1f); say("CELL INFECTED  +2s") }
+            Ev.CELLS_DONE -> sounds.play("bonus")
+            Ev.TIME_ADD -> if (e.index >= 4) say("OUTBREAK!  +${e.index} SECONDS")
+            Ev.TIME_LOST -> say("−${e.index} SECONDS")
+            Ev.TIME_UP -> { sounds.play("tilt"); say("TIME UP") }
+            Ev.DROP -> sounds.play("target", 1f, 0.85f + 0.08f * e.index)
+            Ev.DROPS_DONE -> { sounds.play("bonus"); say("LEVEL ${e.index}") }
             Ev.LANE -> sounds.play("lane")
             Ev.LANES_DONE -> { sounds.play("bonus"); say("BONUS ×${e.index}") }
             Ev.SKILL_SHOT -> { sounds.play("bonus"); say("SKILL SHOT  2,500") }
@@ -116,6 +125,7 @@ class Session(context: Context, val theme: Theme) {
         if (saving != (game.ballSave > 0f)) saving = game.ballSave > 0f
         if (multiball != game.multiball) multiball = game.multiball
         if (tilted != game.tilted) tilted = game.tilted
+        val c = kotlin.math.ceil(game.clock).toInt(); if (clock != c) clock = c
     }
     fun close() { sounds.close() }
 }
@@ -131,6 +141,9 @@ class Machine(private val engine: com.google.android.filament.Engine, private va
     private val spin = Array(3) { Quaternion() }; private val lastXY = Array(3) { floatArrayOf(Float.NaN, 0f) }
     private val sinT = kotlin.math.sin(Math.toRadians(Table.TILT_DEG.toDouble())).toFloat(); private val cosT = kotlin.math.cos(Math.toRadians(Table.TILT_DEG.toDouble())).toFloat()
     private var flipL: ModelNode? = null; private var flipR: ModelNode? = null; private var plunger: ModelNode? = null; private var spinner: ModelNode? = null
+    private val def = session.theme.def
+    private val drops = ArrayList<ModelNode>(); private val dropH = FloatArray(def.drops.size)
+    private val names = lightsFor(def)
     private val lights = HashMap<String, ModelNode>()
     private val tilt = Quaternion.fromAxisAngle(Float3(1f, 0f, 0f), Table.TILT_DEG)
     private fun model(name: String): ModelNode = ModelNode(modelLoader.createModelInstance("models/${session.theme.dir}/$name.glb"), autoAnimate = false).also { frame!!.addChildNode(it) }
@@ -139,8 +152,9 @@ class Machine(private val engine: com.google.android.filament.Engine, private va
         if (this.frame === frame) return
         this.frame = frame
         repeat(3) { balls.add(model("pp_ball").also { it.isVisible = false }); shadows.add(model("pp_ball_shadow").also { it.isVisible = false }) }
-        flipL = model("pp_flipper"); flipR = model("pp_flipper"); plunger = model("pp_plunger"); spinner = model("pp_spinner")
-        for (n in LIGHTS) lights[n] = model("pp_light_$n").also { it.isVisible = false }
+        flipL = model("pp_flipper"); flipR = model("pp_flipper"); plunger = model("pp_plunger"); if (def.spinner != null) spinner = model("pp_spinner")
+        repeat(def.drops.size) { drops.add(model("pp_drop")) }
+        for (n in names) lights[n] = model("pp_light_$n").also { it.isVisible = false }
     }
 
     fun update() {
@@ -167,29 +181,39 @@ class Machine(private val engine: com.google.android.filament.Engine, private va
         }
         flip(flipL, game.left); flip(flipR, game.right)
         Cabinet.at(Table.PLUNGER[0], 0.04f - 0.05f * game.charge, Table.BALL_R).let { p -> plunger?.transform = Transform(position = Position(p[0], p[1], p[2]), quaternion = tilt) }
-        Cabinet.at((Table.SPINNER[0] + Table.SPINNER[1]) / 2, Table.SPINNER[2], 0.032f).let { p ->
-            spinner?.transform = Transform(position = Position(p[0], p[1], p[2]), quaternion = tilt * Quaternion.fromAxisAngle(Float3(1f, 0f, 0f), game.spinnerAngle * 360f % 360f)) }
+        def.spinner?.let { sp -> Cabinet.at((sp[0] + sp[1]) / 2, sp[2], 0.032f).let { p ->
+            spinner?.transform = Transform(position = Position(p[0], p[1], p[2]), quaternion = tilt * Quaternion.fromAxisAngle(Float3(1f, 0f, 0f), game.spinnerAngle * 360f % 360f)) } }
+        // the sweets drop into the playfield fast, and stand up again slower
+        drops.forEachIndexed { i, n ->
+            val want = if (game.dropsDown[i]) -0.031f else 0f
+            dropH[i] = if (want < dropH[i]) maxOf(want, dropH[i] - 0.012f) else minOf(want, dropH[i] + 0.004f)
+            val d = def.drops[i]; val p = Cabinet.at(d[0], d[1], dropH[i])
+            n.transform = Transform(position = Position(p[0], p[1], p[2]), quaternion = tilt); n.isVisible = dropH[i] > -0.03f
+        }
         paintDisplay()
         // the lamps
         fun set(name: String, on: Boolean) { lights[name]?.let { if (it.isVisible != on) it.isVisible = on } }
         if (game.show > 0f) {
             // a big moment: every lamp on the table flashes, half of them at a time
             val k = (t * 12).toInt()
-            LIGHTS.forEachIndexed { i, n -> set(n, (i + k) % 2 == 0) }
+            names.forEachIndexed { i, n -> set(n, (i + k) % 2 == 0) }
             return
         }
         if (game.gameOver) {
             // attract mode: the lights chase round the table
             val k = (t * 6).toInt()
-            LIGHTS.forEachIndexed { i, n -> set(n, (i + k) % 5 == 0) }
+            names.forEachIndexed { i, n -> set(n, (i + k) % 5 == 0) }
             return
         }
         for (i in 0..2) set("lane$i", game.lanes[i] || (game.skillLane == i && blink(4.0)))
-        for (i in 0..3) set("letter$i", game.letters[i] || game.targetFlash[i] < 0.18f)
-        for (i in 0..2) set("bumper$i", game.bumperFlash[i] < 0.12f || (game.superBumpers && blink(2.0)))
+        for (i in def.targets.indices) set("letter$i", game.letters[i] || game.targetFlash[i] < 0.18f)
+        for (i in def.bumpers.indices) set("bumper$i", game.bumperFlash[i] < 0.12f || (game.superBumpers && blink(2.0)))
+        if (def.cells) for (i in def.bumpers.indices) set("cell$i", game.cells[i] || (game.cellHits[i] > 0 && blink(3.0)))
+        for (i in def.drops.indices) set("drop$i", !game.dropsDown[i] && blink(1.5))
+        if (def.rushSeconds > 0f) set("rush", game.rush > 0f && (game.rush > 4f || blink(5.0)))
         for (i in 0..1) set("sling$i", game.slingFlash[i] < 0.12f)
         set("saucer", game.balls.any { it.held > 0f } || blink(1.0))
-        set("save", game.ballSave > 0f && (game.ballSave > 3f || blink(5.0)))
+        set("save", if (game.timed) game.clock < 10f && blink(4.0) else game.ballSave > 0f && (game.ballSave > 3f || blink(5.0)))
         set("multiball", game.multiball && blink(3.0))
         set("kick", game.kickbackLit || game.kickFlash < 0.35f)
         for (k in 2..6) set("mult$k", game.multiplier >= k)
@@ -221,7 +245,12 @@ class Machine(private val engine: com.google.android.filament.Engine, private va
         val now = SystemClock.uptimeMillis()
         val flashing = now - session.messageAt < 2400 && session.message.isNotEmpty()
         val big = if (flashing && (now - session.messageAt) / 300 % 4 != 3L) session.message else if (game.gameOver && now / 1500 % 2 == 0L) "PRESS START" else session.fmt(game.score)
-        val small = if (game.gameOver) "HIGH SCORE  ${session.fmt(session.highScore)}" else "BALL ${game.ballNo}    BONUS x${game.multiplier}" + (if (game.multiball) "    x2" else "") + (if (game.rush > 0f) "    RUSH ${game.rush.toInt() + 1}" else "")
+        val small = when {
+            game.gameOver -> "HIGH SCORE  ${session.fmt(session.highScore)}"
+            game.timed -> "TIME ${kotlin.math.ceil(game.clock).toInt()}    OUTBREAKS ${game.outbreaks}" + (if (game.multiball) "    x2" else "")
+            def.drops.isNotEmpty() -> "BALL ${game.ballNo}    LEVEL ${game.level}" + (if (game.rush > 0f) "    RUSH ${game.rush.toInt() + 1}" else "") + (if (game.multiball) "    x2" else "")
+            else -> "BALL ${game.ballNo}    BONUS x${game.multiplier}" + (if (game.multiball) "    x2" else "")
+        }
         val key = "$big|$small"
         if (key == dispKey || now - dispAt < 90) return
         dispKey = key; dispAt = now
@@ -242,6 +271,13 @@ class Machine(private val engine: com.google.android.filament.Engine, private va
     }
 
     companion object {
-        val LIGHTS = listOf("lane0", "lane1", "lane2", "letter0", "letter1", "letter2", "letter3", "bumper0", "bumper1", "bumper2", "sling0", "sling1", "saucer", "save", "multiball", "kick", "mult2", "mult3", "mult4", "mult5", "mult6")
+        /** The lamps of one machine: tools/3d/table.js makes a model pp_light_<name> for each of these. */
+        fun lightsFor(d: TableDef): List<String> = buildList {
+            repeat(3) { add("lane$it") }; d.targets.indices.forEach { add("letter$it") }; d.bumpers.indices.forEach { add("bumper$it") }
+            if (d.cells) d.bumpers.indices.forEach { add("cell$it") }
+            add("sling0"); add("sling1"); if (d.saucer != null) add("saucer"); addAll(listOf("save", "multiball", "kick"))
+            d.drops.indices.forEach { add("drop$it") }; if (d.drops.isNotEmpty()) add("rush")
+            for (k in 2..6) add("mult$k")
+        }
     }
 }

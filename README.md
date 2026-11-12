@@ -1,13 +1,16 @@
-# PUFF PUFF
+# Pinball AR
 
 Three pinball machines for your room: real size in AR (ARCore), or in 3D on the screen. Android.
 
-- **PUFF PUFF** — clouds and a steel ball.
-- **ACHOO ACHOO** — the ball is a virus; spelling G·E·R·M starts a three-ball OUTBREAK.
-- **YUM YUM** — a peppermint ball; lighting the top lanes starts a 20 second SUGAR RUSH (everything double).
+- **PUFF PUFF** — clouds and a steel ball. 3 balls; spell P·U·F·F for multiball, mystery saucer, spinner and kickback.
+- **VIRUS** — you are the virus. Against the clock (100 s, no ball count): infect all five cells (bumpers) for an
+  OUTBREAK, three balls and more time; each outbreak the virus mutates (cells need more hits, the clock runs faster).
+  A drain costs 5 seconds.
+- **CANDY B** — a peppermint ball in a sweet shop. 3 balls; knock down the row of five sweets (drop targets) for the
+  next level and a 20 second SUGAR RUSH (everything double); the jar is the mystery saucer.
 
-The three share one playfield and one physics (`Theme.kt`, `Rules` in `Pinball.kt`); each has its own models in
-`assets/models/<name>` (`export.html?theme=puff|virus|candy`).
+Each machine has its own field and rules (`TableDef` in `Table.kt`, played by `Pinball.kt`), its own cabinet and models
+in `assets/models/<name>` (`export.html?theme=puff|virus|candy`), and its picture on the first screen in `assets/menu`.
 
 Install: take `PUFF-PUFF.apk` from the latest release.
 
@@ -30,6 +33,6 @@ Install: take `PUFF-PUFF.apk` from the latest release.
 - `app/src/main/java/com/puffpuff/pinball/Table.kt` — the playfield in metres. `Pinball.kt` — physics and rules, no graphics;
   `PinballTest.kt` plays forty whole games with a simple robot player.
 - `Machine.kt` — sounds, the display, the moving parts and lamps. `MainActivity.kt` — the AR and 3D views and the buttons.
-- `tools/3d/table.js` builds every model from `tools/3d/layout.json` (three.js, exported to GLB in a headless browser with
-  `export.html`); `layout.json` is the text of `Cabinet.layoutJson()` and a unit test keeps them the same.
+- `tools/3d/table.js` builds every model from `tools/3d/layout_<name>.json` (three.js, exported to GLB in a headless browser
+  with `export.html`); each is the text of `Cabinet.layoutJson(TableDef.X)` and a unit test keeps them the same.
 - `tools/make_sounds.py OUT_DIR` synthesizes the sounds. No third-party art or samples.

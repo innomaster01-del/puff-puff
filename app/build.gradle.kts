@@ -11,9 +11,9 @@ android {
         applicationId = "com.puffpuff.pinball"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "2.0"
-        resValue("string", "app_name", "PUFF PUFF Pinball")
+        versionCode = 6
+        versionName = "3.0"
+        resValue("string", "app_name", "Pinball AR")
     }
     // fixed sideload key, so a new APK installs over the old one (not a Play Store key)
     signingConfigs { create("puff") { storeFile = file("puff-sideload.jks"); storePassword = "puffpuff"; keyAlias = "puff"; keyPassword = "puffpuff" } }

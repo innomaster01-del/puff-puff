@@ -6,7 +6,27 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
+import kotlinx.coroutines.launch
+import kotlin.math.absoluteValue
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -78,7 +98,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 
-private val CYAN = Color(0xFF22E0FF); private val PINK = Color(0xFFFF3FA0); private val YELLOW = Color(0xFFFFE14A); private val MINT = Color(0xFF5DFFB0); private val NIGHT = Color(0xE6120630)
+private val INK = Color(0xFF07040F); private val CYAN = Color(0xFF22E0FF); private val PINK = Color(0xFFFF3FA0); private val YELLOW = Color(0xFFFFE14A); private val MINT = Color(0xFF5DFFB0); private val NIGHT = Color(0xE6120630)
 private class Ref<T>(var v: T)
 
 class MainActivity : ComponentActivity() {
@@ -108,24 +128,84 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** The first screen: the three machines to choose from, each with its best score. */
+/**
+ * The first screen: the machines in a carousel, each standing in a dark showroom, with its story, how long a game is,
+ * its rules and the best score. Swipe to choose, PLAY to go.
+ */
 @Composable
 private fun Menu(context: android.content.Context, onPick: (Theme) -> Unit) {
     val prefs = remember { context.getSharedPreferences("puffpuff", android.content.Context.MODE_PRIVATE) }
     val nf = remember { java.text.NumberFormat.getIntegerInstance(java.util.Locale.US) }
-    Column(Modifier.fillMaxSize().background(Color(0xFF0A0418)).statusBarsPadding().navigationBarsPadding().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("PINBALL", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 14.dp))
-        Text("Pick a machine. It will stand in your room.", color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
-        for (t in Theme.entries) {
-            val a = Color(t.colorA); val b = Color(t.colorB); val high = prefs.getLong(t.highKey, 0L)
-            Column(Modifier.fillMaxWidth().widthIn(max = 460.dp).clip(RoundedCornerShape(24.dp)).background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(b.copy(alpha = 0.28f), a.copy(alpha = 0.18f))))
-                .border(2.5.dp, androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(b, a)), RoundedCornerShape(24.dp)).pointerInput(t) { detectTapGestures(onTap = { onPick(t) }) }.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(t.title, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, style = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(color = b, blurRadius = 26f)))
-                Text(t.tagline, color = Color.White.copy(alpha = 0.88f), fontSize = 14.sp)
-                Text(if (high > 0) "BEST  ${nf.format(high)}" else "NOT PLAYED YET", color = a, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    val themes = Theme.entries
+    val pictures = remember { themes.associateWith { t -> runCatching { context.assets.open("menu/${t.dir}.jpg").use { android.graphics.BitmapFactory.decodeStream(it) }.asImageBitmap() }.getOrNull() } }
+    val pager = rememberPagerState(pageCount = { themes.size })
+    val scope = rememberCoroutineScope()
+    val cur = themes[pager.currentPage]
+    val a by animateColorAsState(Color(cur.colorA), tween(600), label = "a")
+    val b by animateColorAsState(Color(cur.colorB), tween(600), label = "b")
+    val pulse by rememberInfiniteTransition(label = "glow").animateFloat(0.7f, 1f, infiniteRepeatable(tween(2800), RepeatMode.Reverse), label = "pulse")
+    val gold = Brush.linearGradient(listOf(Color(0xFFFFF1C9), Color(0xFFE8B95A), Color(0xFFB8862E)))
+    Box(Modifier.fillMaxSize().background(INK).drawBehind {
+        // the showroom: two soft coloured lights in the dark, in the colours of the machine in front of you
+        drawCircle(Brush.radialGradient(listOf(b.copy(alpha = 0.34f * pulse), Color.Transparent), center = Offset(size.width * 0.05f, size.height * 0.12f), radius = size.width * 1.0f), radius = size.width * 1.0f, center = Offset(size.width * 0.05f, size.height * 0.12f))
+        drawCircle(Brush.radialGradient(listOf(a.copy(alpha = 0.22f * pulse), Color.Transparent), center = Offset(size.width * 0.95f, size.height * 0.92f), radius = size.width * 1.1f), radius = size.width * 1.1f, center = Offset(size.width * 0.95f, size.height * 0.92f))
+    }) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
+            // the name
+            Row(Modifier.padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("PINBALL", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, letterSpacing = 7.sp)
+                Box(Modifier.padding(start = 10.dp).clip(RoundedCornerShape(10.dp)).background(gold).padding(horizontal = 9.dp, vertical = 1.dp)) {
+                    Text("AR", color = INK, fontSize = 26.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                }
             }
+            Text("THE MACHINE COLLECTION", Modifier.padding(top = 4.dp), style = TextStyle(brush = gold), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 5.sp)
+            Box(Modifier.padding(top = 10.dp).width(56.dp).height(1.dp).background(gold))
+            // the machines
+            HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 14.dp), contentPadding = PaddingValues(horizontal = 30.dp), pageSpacing = 14.dp) { page ->
+                val t = themes[page]; val ta = Color(t.colorA); val tb = Color(t.colorB); val high = prefs.getLong(t.highKey, 0L)
+                val off = ((pager.currentPage - page) + pager.currentPageOffsetFraction).absoluteValue.coerceIn(0f, 1f)
+                Box(Modifier.fillMaxSize().graphicsLayer { scaleX = 1f - 0.07f * off; scaleY = 1f - 0.07f * off; alpha = 1f - 0.45f * off }
+                    .clip(RoundedCornerShape(30.dp)).background(Color(0xFF0D0818))
+                    .border(1.2.dp, Brush.linearGradient(listOf(tb.copy(alpha = 0.9f), Color.White.copy(alpha = 0.12f), ta.copy(alpha = 0.9f))), RoundedCornerShape(30.dp))
+                    .pointerInput(t) { detectTapGestures(onTap = { if (pager.currentPage == page) onPick(t) else scope.launch { pager.animateScrollToPage(page) } }) }) {
+                    pictures[t]?.let { Image(it, contentDescription = t.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter) }
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, 0.42f to Color.Transparent, 0.72f to INK.copy(alpha = 0.86f), 1f to INK)))
+                    // how long a game is, top left; the best score, top right
+                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Chip(t.length, ta)
+                        Chip(if (high > 0) "BEST ${nf.format(high)}" else "NEW", Color(0xFFE8B95A))
+                    }
+                    Column(Modifier.align(Alignment.BottomStart).padding(horizontal = 20.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(t.title, color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp,
+                            style = TextStyle(shadow = androidx.compose.ui.graphics.Shadow(color = tb, blurRadius = 34f)))
+                        Text(t.tagline, color = Color.White.copy(alpha = 0.86f), fontSize = 14.sp, lineHeight = 19.sp)
+                        Box(Modifier.padding(vertical = 4.dp).fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(tb.copy(alpha = 0.8f), Color.Transparent))))
+                        for (r in t.rules) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(6.dp).clip(CircleShape).background(ta))
+                            Text(r, Modifier.padding(start = 10.dp), color = Color.White.copy(alpha = 0.78f), fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+            // which one of three
+            Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                themes.forEachIndexed { i, t -> val on = i == pager.currentPage
+                    Box(Modifier.height(6.dp).width(if (on) 26.dp else 6.dp).clip(CircleShape).background(if (on) Color(t.colorB) else Color.White.copy(alpha = 0.25f))) }
+            }
+            // play
+            Box(Modifier.padding(start = 30.dp, end = 30.dp, top = 16.dp).fillMaxWidth().widthIn(max = 480.dp).height(60.dp).clip(RoundedCornerShape(30.dp))
+                .background(Brush.horizontalGradient(listOf(b, a))).pointerInput(cur) { detectTapGestures(onTap = { onPick(cur) }) }, contentAlignment = Alignment.Center) {
+                Text("PLAY  ${cur.title}", color = INK, fontSize = 19.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
+            }
+            Text("Stands in your room in AR  ·  or play it in 3D", Modifier.padding(top = 10.dp, bottom = 14.dp), color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp, letterSpacing = 0.5.sp)
         }
     }
+}
+
+@Composable
+private fun Chip(text: String, color: Color) {
+    Text(text, Modifier.clip(RoundedCornerShape(12.dp)).background(INK.copy(alpha = 0.72f)).border(1.dp, color.copy(alpha = 0.75f), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 5.dp),
+        color = color, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp)
 }
 
 /** The machine in your room: real size on the floor (or a small one on a table). */
@@ -278,6 +358,13 @@ private fun Hud(session: Session, extras: @Composable () -> Unit) {
                 extras()
                 Small(if (session.sounds.muted) "Sound: off" else "Sound: on") { session.sounds.muted = !session.sounds.muted; now = SystemClock.uptimeMillis() }
             }
+        }
+        // VIRUS is played against the clock: it is shown big, top left, and turns red in the last ten seconds
+        if (session.theme.def.timeLimit > 0f && !session.gameOver) {
+            val low = session.clock <= 10
+            Text("${session.clock}s", Modifier.align(Alignment.TopStart).statusBarsPadding().padding(10.dp).clip(RoundedCornerShape(16.dp)).background(NIGHT)
+                .border(1.5.dp, if (low) Color(0xFFFF3A3A) else Color(session.theme.colorA), RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 6.dp),
+                color = if (low && now / 250 % 2 == 0L) Color(0xFFFF3A3A) else Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
         }
         // the words that flash up in the middle
         val showing = session.gameOver || now - session.messageAt < 2400
